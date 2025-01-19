@@ -1,0 +1,267 @@
+<html>
+<head>
+	<meta charset="UTF-8">
+	<title>Upload</title>
+</head>
+
+<style>
+body{
+	font-family: "verdana";
+	font-size: 14px
+}
+
+form > div{
+	margin : 10px;
+	padding: 2px;
+}
+</style>
+
+<body>
+
+	<div id="converter">
+
+		<h1>MP3 converter</h1>
+		<input type="file" name="file" accept="video/*, audio/*"></input>
+		<div data-role="log">
+			<div data-role="main"></div>
+			<small data-role="sub" style="color: grey;"></small>
+		</div>
+
+	</div>
+	
+
+
+<!-- polyfill -->
+<script>
+	// from:https://github.com/jserz/js_piece/blob/master/DOM/ChildNode/remove()/remove().md
+	(function (arr) {
+	  arr.forEach(function (item) {
+	    if (item.hasOwnProperty('remove')) {
+	      return;
+	    }
+	    Object.defineProperty(item, 'remove', {
+	      configurable: true,
+	      enumerable: true,
+	      writable: true,
+	      value: function remove() {
+	        if (this.parentNode !== null)
+	          this.parentNode.removeChild(this);
+	      }
+	    });
+	  });
+	})([Element.prototype, CharacterData.prototype, DocumentType.prototype]);	
+</script>
+
+<!-- utils -->
+<script>
+
+	function waterfall( fns ){ fns.shift()( function(){ return fns.length ? waterfall(fns) : null } ) }
+
+</script>
+
+
+<script>
+
+// MP3 converter
+(function(){
+
+    var mp3Worker = new Worker('worker.js');
+
+
+	var parent = document.querySelector('#converter');
+
+
+	var log = (function( element ){
+
+		var main = element.querySelector('[data-role="main"]');
+		var sub = element.querySelector('[data-role="sub"]');
+
+		function message( content ){
+			reset();
+			main.innerText = content;
+		}
+
+		var waitingTimer;
+		function waiting( content ){
+
+			reset();
+
+			var currentContent = content+'.';
+			function update(){
+				currentContent = currentContent.match( /\.{3}$/ ) ? content+'.' : currentContent+'.';
+				main.innerText = currentContent;
+			}
+
+			main.innerText = currentContent;
+			waitingTimer = setInterval( update, 1000);
+
+		}
+
+		var clearTimer;
+		function clear( delay ){
+			if( !delay ){ delay = 1; }
+			
+			reset();
+			clearTimer = setTimeout( function(){ main.innerText = ''; }, delay );
+
+		}
+
+		function setProgress( progress ){
+			sub.innerText = (progress*100).toFixed(2)+'%';
+		}
+
+		function clearProgress(){
+			sub.innerText = '';	
+		}
+
+		function reset(){
+			clearInterval( waitingTimer );
+			clearTimeout( clearTimer );
+		}
+
+		return {
+			message: message,
+			waiting: waiting,
+			setProgress: setProgress,
+			clearProgress: clearProgress,
+			clear: clear
+		}
+
+	})( parent.querySelector('[data-role="log"]') )
+
+
+
+
+	function download( data, filename ){
+
+		// e.g: download( new Blob(['Hello world'], {type: 'text/plain'}), 'myFile.txt')
+
+		var a = document.createElement('a');
+		a.download = filename;
+		a.href = window.URL.createObjectURL(data);
+		a.click();
+		if( a.remove ){ a.remove() };// polyfill = https://developer.mozilla.org/en-US/docs/Web/API/ChildNode/remove
+
+	}
+
+
+    function converter( file ){
+
+    	function timer( fn ){
+    		return function(next){
+				console.time( fn.name );
+				fn( function(){ console.timeEnd( fn.name ); next(); });    			
+    		}
+    	}
+
+    	if( file.type.match( /audio/ ) ){
+			waterfall( [ getFileArrayBuffer, convertToMp3, downloadMp3 ].map( timer ) );
+    	}else{
+    		waterfall( [ getFileArrayBuffer, decode, convertToMp3, downloadMp3 ].map( timer ) );	
+    	}
+		
+
+		var fileArrayBuffer;
+		function getFileArrayBuffer( next ){
+
+			log.waiting( 'reading file' );
+
+			var fileData = new Blob([file]);
+
+		    var reader = new FileReader();
+		    reader.onload = function(){ fileArrayBuffer = reader.result; next(); }
+		    reader.readAsArrayBuffer(fileData);
+
+		}
+
+		var decodedAudioData;
+		function decode( next ){
+
+			log.waiting( 'extracting audio' );
+
+			var audioContext = new( window.AudioContext || window.webkitAudioContext )();
+		    audioContext.decodeAudioData( fileArrayBuffer, onDecoded, onError );
+
+		    function onError( error ){ console.log( 'Error with decoding audio data' + error.err ); }
+
+			function onDecoded( result ){
+
+				decodedAudioData = {
+					sampleRate: result.sampleRate,
+					channels: []
+				}
+				for( var i = 0; i < result.numberOfChannels; i++ ){
+					decodedAudioData.channels.push( result.getChannelData(i) );
+				}
+
+				next();
+			}
+
+		}
+
+	    var mp3;
+	    function convertToMp3( next ){
+
+			log.waiting( 'converting to mp3' );
+
+			mp3Worker.postMessage({
+				cmd: 'convert',
+				fileArrayBuffer: decodedAudioData || fileArrayBuffer,
+				fileType: file.type
+			});
+
+
+	        mp3Worker.onmessage = function( event ){ 
+				switch( event.data.cmd ){
+					case 'progress': 
+						log.setProgress( event.data.progress );
+						break;
+
+					case 'end': 
+						mp3 = event.data.mp3;
+						log.clearProgress();
+						next();
+						break;
+				}
+	        }
+
+	    }
+
+	    function downloadMp3( next ){
+
+			log.waiting( 'downloading' );
+
+			var mp3blob = new Blob( mp3, {type: 'audio/mp3'})
+	   	    download( mp3blob, 'myFile.mp3' );
+
+	   	    log.message( 'done' );
+	   	    log.clear( 2*1000 );
+
+	    	next();
+
+	    }
+
+
+    }
+
+
+	var fileInput = parent.querySelector('input[name=file]');
+	function onFileChange(){
+
+		if( !fileInput.files || !fileInput.files.length ){ return; }
+
+		var file = fileInput.files[0];
+
+		if( file.type.match( 'audio/mp3' ) || file.name.match( /\.mp3/i ) ){ log.message( '"'+fileInput.files[0].name+'" is already a mp3' ); return;};
+
+		converter( file );
+
+	}
+	fileInput.addEventListener( 'change', onFileChange );
+
+
+})();
+</script>
+
+</body>
+</html>
