@@ -57,6 +57,20 @@ form > div{
 
 	function waterfall( fns ){ fns.shift()( function(){ return fns.length ? waterfall(fns) : null } ) }
 
+	function download( data, filename ){
+
+		// e.g: download( new Blob(['Hello world'], {type: 'text/plain'}), 'myFile.txt')
+
+		var a = document.createElement('a');
+		a.download = filename;
+		a.href = window.URL.createObjectURL(data);
+		a.click();
+		a?.remove();
+
+	}
+
+	const series = (fns, acc) => fns.reduce((p, fn) => p.then( acc => fn(acc)), Promise.resolve(acc));
+
 </script>
 
 
@@ -68,10 +82,10 @@ form > div{
     var mp3Worker = new Worker('worker.js');
 
 
-	var parent = document.querySelector('#converter');
+	const parent = document.querySelector('#converter');
 
 
-	var log = (function( element ){
+	const log = (function( element ){
 
 		var main = element.querySelector('[data-role="main"]');
 		var sub = element.querySelector('[data-role="sub"]');
@@ -130,84 +144,60 @@ form > div{
 	})( parent.querySelector('[data-role="log"]') )
 
 
+    const converter = async file => {
 
-
-	function download( data, filename ){
-
-		// e.g: download( new Blob(['Hello world'], {type: 'text/plain'}), 'myFile.txt')
-
-		var a = document.createElement('a');
-		a.download = filename;
-		a.href = window.URL.createObjectURL(data);
-		a.click();
-		if( a.remove ){ a.remove() };// polyfill = https://developer.mozilla.org/en-US/docs/Web/API/ChildNode/remove
-
-	}
-
-
-    function converter( file ){
-
-    	function timer( fn ){
-    		return function(next){
+    	const timer = fn => {
+			return acc => new Promise( resolve => {
 				console.time( fn.name );
-				fn( function(){ console.timeEnd( fn.name ); next(); });    			
-    		}
+				fn(acc).then( acc => { console.timeEnd( fn.name ); resolve(acc) } );
+			});
+
     	}
 
-    	if( file.type.match( /audio/ ) ){
-			waterfall( [ getFileArrayBuffer, convertToMp3, downloadMp3 ].map( timer ) );
-    	}else{
-    		waterfall( [ getFileArrayBuffer, decode, convertToMp3, downloadMp3 ].map( timer ) );	
-    	}
-		
-
-		var fileArrayBuffer;
-		function getFileArrayBuffer( next ){
+		const getFileArrayBuffer = acc => new Promise( resolve => {
 
 			log.waiting( 'reading file' );
 
-			var fileData = new Blob([file]);
+			const fileData = new Blob([acc.file]);
 
-		    var reader = new FileReader();
-		    reader.onload = function(){ fileArrayBuffer = reader.result; next(); }
+		    const reader = new FileReader();
+		    reader.onload = function(){ acc.fileArrayBuffer = reader.result; resolve(acc); }
 		    reader.readAsArrayBuffer(fileData);
 
-		}
+		});
 
-		var decodedAudioData;
-		function decode( next ){
+		const decode = acc => new Promise( resolve => {
 
 			log.waiting( 'extracting audio' );
 
 			var audioContext = new( window.AudioContext || window.webkitAudioContext )();
-		    audioContext.decodeAudioData( fileArrayBuffer, onDecoded, onError );
+		    audioContext.decodeAudioData( acc.fileArrayBuffer, onDecoded, onError );
 
 		    function onError( error ){ console.log( 'Error with decoding audio data' + error.err ); }
 
 			function onDecoded( result ){
 
-				decodedAudioData = {
+				acc.decodedAudioData = {
 					sampleRate: result.sampleRate,
 					channels: []
 				}
 				for( var i = 0; i < result.numberOfChannels; i++ ){
-					decodedAudioData.channels.push( result.getChannelData(i) );
+					acc.decodedAudioData.channels.push( result.getChannelData(i) );
 				}
 
-				next();
+				resolve(acc);
 			}
 
-		}
+		})
 
-	    var mp3;
-	    function convertToMp3( next ){
+	    const convertToMp3 = acc => new Promise( resolve => {
 
 			log.waiting( 'converting to mp3' );
 
 			mp3Worker.postMessage({
 				cmd: 'convert',
-				fileArrayBuffer: decodedAudioData || fileArrayBuffer,
-				fileType: file.type
+				fileArrayBuffer: acc.decodedAudioData || acc.fileArrayBuffer,
+				fileType: acc.file.type
 			});
 
 
@@ -218,43 +208,50 @@ form > div{
 						break;
 
 					case 'end': 
-						mp3 = event.data.mp3;
+						acc.mp3 = event.data.mp3;
 						log.clearProgress();
-						next();
+						resolve(acc);
 						break;
 				}
 	        }
 
-	    }
+	    })
 
-	    function downloadMp3( next ){
 
-			log.waiting( 'downloading' );
+		const pipeline = file.type.match( /audio/ ) ? [ getFileArrayBuffer, convertToMp3 ] 
+													: [ getFileArrayBuffer, decode, convertToMp3 ];
+		
+		const acc = await series( pipeline.map( timer ), { file } );
 
-			var mp3blob = new Blob( mp3, {type: 'audio/mp3'})
-	   	    download( mp3blob, 'myFile.mp3' );
-
-	   	    log.message( 'done' );
-	   	    log.clear( 2*1000 );
-
-	    	next();
-
-	    }
-
+		return acc.mp3;
 
     }
 
 
-	var fileInput = parent.querySelector('input[name=file]');
-	function onFileChange(){
+	const fileInput = parent.querySelector('input[name=file]');
+	const onFileChange = async _ => {
 
 		if( !fileInput.files || !fileInput.files.length ){ return; }
 
-		var file = fileInput.files[0];
+		const file = fileInput.files[0];
 
 		if( file.type.match( 'audio/mp3' ) || file.name.match( /\.mp3/i ) ){ log.message( '"'+fileInput.files[0].name+'" is already a mp3' ); return;};
 
-		converter( file );
+
+		const downloadMp3 = mp3 => {
+
+			log.waiting( 'downloading' );
+
+			const mp3blob = new Blob( mp3, { type: 'audio/mp3' })
+			download( mp3blob, 'myFile.mp3' );
+
+			log.message( 'done' );
+			log.clear( 2*1000 );
+
+		};
+
+		const mp3 = await converter( file );
+		downloadMp3( mp3 );
 
 	}
 	fileInput.addEventListener( 'change', onFileChange );
