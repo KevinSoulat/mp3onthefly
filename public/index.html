@@ -55,9 +55,7 @@ form > div{
 <!-- utils -->
 <script>
 
-	function waterfall( fns ){ fns.shift()( function(){ return fns.length ? waterfall(fns) : null } ) }
-
-	function download( data, filename ){
+	const download = ( data, filename ) => {
 
 		// e.g: download( new Blob(['Hello world'], {type: 'text/plain'}), 'myFile.txt')
 
@@ -251,7 +249,31 @@ form > div{
 		};
 
 		const mp3 = await converter( file );
-		downloadMp3( mp3 );
+		//downloadMp3( mp3 );
+
+		const postData = new FormData();
+		postData.append('file', new Blob(mp3, { type: 'audio/mp3' }), 'myFile.mp3');
+
+
+		fetch('/upload', {
+			method: 'POST',
+			body: postData,
+			headers: {
+				'Content-Disposition': 'attachment; filename="myFile.mp3"'
+			}
+		})
+		.then(response => {
+
+			if( !response.ok ){ throw new Error('Network response was not ok'); }
+
+			log.message('Upload successful');
+			log.clear(2000);
+		})
+		.catch(error => {
+			log.message('Upload failed');
+			console.error('Error:', error);
+		});
+
 
 	}
 	fileInput.addEventListener( 'change', onFileChange );
