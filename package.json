@@ -1,0 +1,28 @@
+{
+  "name": "mp3onthefly",
+  "version": "1.0.0",
+  "description": "Client-Side MP3 Converter",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KevinSoulat/mp3onthefly.git"
+  },
+  "keywords": [
+    "mp3",
+    "client-side"
+  ],
+  "author": "KevinSoulat",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/KevinSoulat/mp3onthefly/issues"
+  },
+  "homepage": "https://github.com/KevinSoulat/mp3onthefly#readme",
+  "dependencies": {
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1"
+  }
+}
